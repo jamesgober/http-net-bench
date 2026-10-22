@@ -1,0 +1,99 @@
+# =============================================================================
+#  http-net-bench
+# =============================================================================
+#
+# Competitor benchmarks for http-net (spec section 11.3, workloads H1-H5).
+#
+# This repository exists so that http-net itself never depends on tokio,
+# hyper, or httparse. Those crates are allowed here and only here. http-net
+# is taken from crates.io, never by path: each repository is checked out on
+# its own in CI.
+[package]
+name    = "http-net-bench"
+version = "0.1.0"
+publish = false
+
+# Minimum Supported Rust Version (MSRV)
+rust-version = "1.85"
+edition = "2024"
+
+# License
+license = "MIT OR Apache-2.0"
+
+# Readme
+readme = "README.md"
+
+# Description
+description = "Independent, reproducible benchmarks of http-net against httparse and hyper on identical input bytes."
+
+# Authors
+authors = ["James Gober <me@jamesgober.com>"]
+
+
+# DEPENDENCIES
+# #################################
+# The shared harness in src/ (inputs, the httparse framing pass, the hyper
+# and tokio drivers) is used by both the benches and tests/equivalence.rs,
+# so the competitors are ordinary dependencies of this unpublished crate.
+[dependencies]
+http-net       = "0.5"
+httparse       = "1.10"
+hyper          = { version = "1", features = ["server", "client", "http1"] }
+# `TokioIo`, the standard adapter between tokio's and hyper's I/O traits.
+hyper-util     = { version = "0.1", features = ["tokio"] }
+http-body-util = "0.1"
+bytes          = "1"
+# Current-thread runtime only (no `rt-multi-thread`).
+tokio          = { version = "1", features = ["rt", "io-util", "macros"] }
+
+
+# DEV DEPENDENCIES
+# #################################
+[dev-dependencies]
+criterion = { version = "0.5", default-features = false, features = ["cargo_bench_support"] }
+
+
+# LINTS
+# #################################
+[lints.rust]
+# `scripts/run.sh` builds a second time with
+# RUSTFLAGS='--cfg httparse_disable_simd="1"' (the form httparse 1.10's build
+# script actually honours); the harness reads the same cfg to label results.
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(httparse_disable_simd, values("1"))'] }
+
+
+# BENCHMARKS
+# #################################
+[[bench]]
+name    = "h1_head"
+harness = false
+
+[[bench]]
+name    = "h2_exchange"
+harness = false
+
+[[bench]]
+name    = "h3_response"
+harness = false
+
+[[bench]]
+name    = "h4_chunked"
+harness = false
+
+[[bench]]
+name    = "h5_pipelined"
+harness = false
+
+
+# PROFILES
+# #################################
+# The same code generation settings as http-net's release profile, so the
+# numbers here are comparable with http-net's own `cargo bench`.
+[profile.release]
+opt-level     = 3
+lto           = "fat"
+codegen-units = 1
+debug         = false
+
+[profile.bench]
+inherits = "release"

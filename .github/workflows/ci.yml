@@ -1,0 +1,44 @@
+name: CI
+
+# Benchmarks are not run in CI: shared runners are too noisy for numbers
+# worth keeping. CI proves that the harness builds, is lint-clean, and that
+# every competitor setup still does the same work as http-net
+# (tests/equivalence.rs).
+
+on:
+  push:
+    branches: [main, dev]
+  pull_request:
+    branches: [main, dev]
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: "-D warnings"
+  # Run every JS action on Node.js 24 ahead of GitHub's forced migration,
+  # silencing "Node.js 20 actions are deprecated" runner warnings.
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+jobs:
+  build:
+    name: Build, lint, equivalence (ubuntu-latest / stable)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@v2
+      - name: Format
+        run: cargo fmt --all -- --check
+      - name: Clippy
+        run: cargo clippy --locked --all-targets -- -D warnings
+      - name: Equivalence tests
+        run: cargo test --locked
+      - name: Build the benches (httparse SIMD on)
+        run: cargo bench --locked --no-run
+      # httparse 1.10 honours only the `="1"` form of this cfg.
+      - name: Build the benches (httparse SIMD off)
+        run: cargo bench --locked --no-run --bench h1_head --bench h3_response
+        env:
+          RUSTFLAGS: '-D warnings --cfg httparse_disable_simd="1"'
+          CARGO_TARGET_DIR: target/nosimd

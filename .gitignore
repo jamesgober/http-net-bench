@@ -1,0 +1,19 @@
+# Development (.dev/ and .claude/ stay local)
+/.dev
+/.claude
+
+# Rust / Cargo
+/target/
+**/*.rs.bk
+
+# Editor & OS junk
+/.vscode
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Secrets
+.env
+
+# Cargo.lock IS committed: this is a benchmark harness, and a result is only
+# reproducible with the exact competitor versions that produced it.
