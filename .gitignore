@@ -1,6 +1,5 @@
-# Development (.dev/ and .claude/ stay local)
+# Development (.dev/ stays local)
 /.dev
-/.claude
 
 # Rust / Cargo
 /target/
