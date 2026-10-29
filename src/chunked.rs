@@ -48,7 +48,7 @@ pub fn http_net_decode(
                 });
             }
             ChunkStep::NeedMore { .. } => return Err(HttpError::UnexpectedEof),
-            // `ChunkStep` is non-exhaustive; 0.5 has exactly the four.
+            // `ChunkStep` is non-exhaustive; 0.9 has exactly the four.
             _ => return Err(HttpError::UnexpectedEof),
         }
     }

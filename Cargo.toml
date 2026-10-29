@@ -36,7 +36,7 @@ authors = ["James Gober <me@jamesgober.com>"]
 # and tokio drivers) is used by both the benches and tests/equivalence.rs,
 # so the competitors are ordinary dependencies of this unpublished crate.
 [dependencies]
-http-net       = "0.5"
+http-net       = "0.9"
 httparse       = "1.10"
 hyper          = { version = "1", features = ["server", "client", "http1"] }
 # `TokioIo`, the standard adapter between tokio's and hyper's I/O traits.
