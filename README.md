@@ -97,6 +97,10 @@ Before a change to the harness: `cargo fmt --all`, `cargo clippy --all-targets -
 
 Results files live in [`results/`](./results/). A file whose name ends in `-smoke` comes from a short run that only proves the benches work; its numbers are not measurements.
 
+| File | http-net | Note |
+|---|---|---|
+| [`2026-10-29-c1255d143e57`](./results/2026-10-29-c1255d143e57.md) | 0.9.0 | The machine was shared with fuzzers (load average 6 to 12): absolute times are about half higher than on a quiet machine for both sides, so read the ratios within a group. A quiet-machine H1 run replaces it before http-net 1.0. |
+
 <br>
 
 <div id="license">
