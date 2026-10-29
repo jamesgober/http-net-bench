@@ -209,9 +209,12 @@ dependencies = [
 
 [[package]]
 name = "http-net"
-version = "0.5.0"
+version = "0.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1d6afff7fc6287ae7e01bbe16c20aba529b2bc0fb170335fd2c6903011633b82"
+checksum = "d47f57b31c5dd1470bfd45b750b1c06da1a210a2333ce983a1f2c08a98e91d7e"
+dependencies = [
+ "parse-net",
+]
 
 [[package]]
 name = "http-net-bench"
@@ -331,6 +334,12 @@ name = "oorandom"
 version = "11.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d6790f58c7ff633d8771f42965289203411a5e5c68388703c06e14f24770b41e"
+
+[[package]]
+name = "parse-net"
+version = "0.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b2024fb9d49ee36e280e0684fed2016bb3046ac6729a858f3896286c8c7c2415"
 
 [[package]]
 name = "pin-project-lite"

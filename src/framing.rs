@@ -79,8 +79,8 @@ impl From<http_net::BodyFraming> for Framing {
             http_net::BodyFraming::Length(n) => Self::Length(n),
             http_net::BodyFraming::Chunked => Self::Chunked,
             http_net::BodyFraming::UntilClose => Self::UntilClose,
-            // `BodyFraming` is non-exhaustive; 0.5 has exactly the four.
-            _ => unreachable!("a BodyFraming variant http-net 0.5 does not have"),
+            // `BodyFraming` is non-exhaustive; 0.9 has exactly the four.
+            _ => unreachable!("a BodyFraming variant http-net 0.9 does not have"),
         }
     }
 }
