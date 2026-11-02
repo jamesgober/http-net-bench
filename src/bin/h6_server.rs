@@ -117,8 +117,29 @@ fn actix_server(addr: SocketAddr) -> Result<(), Box<dyn Error>> {
 }
 
 /// may-minihttp on one `may` worker. It writes `server` and `date` itself.
-#[derive(Clone)]
 struct MayPlaintext;
+
+/// The factory form of may-minihttp's server, for the one thing the plain
+/// form cannot do: may-minihttp never sets `TCP_NODELAY` (the call is
+/// commented out upstream), and every other server here does, so without it
+/// pipelined batches of about 1 KiB and up stall. The factory is told each
+/// connection's descriptor.
+struct MayFactory;
+
+impl may_minihttp::HttpServiceFactory for MayFactory {
+    type Service = MayPlaintext;
+
+    fn new_service(&self, id: usize) -> MayPlaintext {
+        use std::{mem::ManuallyDrop, net::TcpStream, os::fd::FromRawFd};
+
+        // SAFETY: on Unix `id` is the descriptor of the accepted connection,
+        // open for as long as the connection is. `ManuallyDrop` keeps this
+        // borrowed view from closing it.
+        let stream = ManuallyDrop::new(unsafe { TcpStream::from_raw_fd(id as i32) });
+        stream.set_nodelay(true).expect("TCP_NODELAY");
+        MayPlaintext
+    }
+}
 
 impl may_minihttp::HttpService for MayPlaintext {
     fn call(
@@ -139,7 +160,7 @@ impl may_minihttp::HttpService for MayPlaintext {
 
 fn may_server(addr: SocketAddr) -> Result<(), Box<dyn Error>> {
     may::config().set_workers(1);
-    let server = may_minihttp::HttpServer(MayPlaintext).start(addr)?;
+    let server = may_minihttp::HttpServiceFactory::start(MayFactory, addr)?;
     server.join().map_err(|_| "the may server panicked")?;
     Ok(())
 }
