@@ -2,12 +2,13 @@
 #  http-net-bench
 # =============================================================================
 #
-# Competitor benchmarks for http-net (spec section 11.3, workloads H1-H5).
+# Competitor benchmarks for http-net (spec section 11.3, workloads H1-H6).
 #
 # This repository exists so that http-net itself never depends on tokio,
 # hyper, or httparse. Those crates are allowed here and only here. http-net
 # is taken from crates.io, never by path: each repository is checked out on
-# its own in CI.
+# its own in CI. serve-net is the one vendored Rust crate: vendor/README.md
+# says why, and what it changes.
 [package]
 name    = "http-net-bench"
 version = "0.1.0"
@@ -24,7 +25,7 @@ license = "MIT OR Apache-2.0"
 readme = "README.md"
 
 # Description
-description = "Independent, reproducible benchmarks of http-net against httparse and hyper on identical input bytes."
+description = "Independent, reproducible benchmarks of http-net against httparse, hyper, picohttpparser, and llhttp on identical input bytes."
 
 # Authors
 authors = ["James Gober <me@jamesgober.com>"]
@@ -45,6 +46,26 @@ http-body-util = "0.1"
 bytes          = "1"
 # Current-thread runtime only (no `rt-multi-thread`).
 tokio          = { version = "1", features = ["rt", "io-util", "macros"] }
+# H6 only, behind the `h6` feature: the competitor servers stay out of the
+# H1-H5 build.
+serve-net      = { version = "0.3", path = "vendor/serve-net", optional = true }
+actix-web      = { version = "4", default-features = false, optional = true }
+may_minihttp   = { version = "0.1", optional = true }
+may            = { version = "0.3", optional = true }
+
+
+# BUILD DEPENDENCIES
+# #################################
+[build-dependencies]
+# Compiles the vendored C parsers (build.rs).
+cc = "1"
+
+
+# FEATURES
+# #################################
+[features]
+# The socket workload's servers (`h6_server`) and their equivalence checks.
+h6 = ["dep:serve-net", "dep:actix-web", "dep:may_minihttp", "dep:may", "tokio/net"]
 
 
 # DEV DEPENDENCIES
@@ -60,6 +81,20 @@ criterion = { version = "0.5", default-features = false, features = ["cargo_benc
 # RUSTFLAGS='--cfg httparse_disable_simd="1"' (the form httparse 1.10's build
 # script actually honours); the harness reads the same cfg to label results.
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(httparse_disable_simd, values("1"))'] }
+
+
+# BINARIES
+# #################################
+# H6 runs in two processes, so it is not a criterion bench: scripts/run.sh
+# pins `h6_server` to one core and `h6_load` to others.
+[[bin]]
+name = "h6_server"
+path = "src/bin/h6_server.rs"
+required-features = ["h6"]
+
+[[bin]]
+name = "h6_load"
+path = "src/bin/h6_load.rs"
 
 
 # BENCHMARKS

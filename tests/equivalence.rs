@@ -8,6 +8,11 @@
 //! same response semantics (status, fields, body) for H2, H3, and H5; the
 //! same decoded body for H4; and the transport baselines moving the same
 //! bytes as hyper.
+//!
+//! The report-only comparisons are held to the same rule: picohttpparser
+//! with the framing pass answers as http-net does on H1 and decodes the same
+//! body on H4, llhttp sees the same 100,000 requests on H5, and with the
+//! `h6` feature every socket server answers the same request alike.
 
 use http_net::{ClientConn, FieldSpan, HttpError, Request, Response, ServerConn};
 use http_net_bench::{
@@ -18,7 +23,9 @@ use http_net_bench::{
         JSON_RESPONSE_FIELDS, MAX_BODY, PIPELINED_COUNT, PIPELINED_ONE, READ_SIZE, chunked_body,
         chunked_wire, five_field_response, json_response_wire, limits, pipelined_input,
     },
-    net, rt,
+    llhttp, net,
+    pico::{self, Build, PhrHeader, PicoError},
+    rt,
 };
 
 /// A response, parsed by httparse into what a client can observe: status,
@@ -188,6 +195,50 @@ fn h1_framing_pass_agrees_with_http_net_on_every_rule() {
             // Every case is valid syntax, so a refusal by httparse itself
             // would mean the case does not reach the framing pass at all.
             (a, b) => panic!("disagree on {shown}: http-net {a:?}, httparse {b:?}"),
+        }
+    }
+}
+
+#[test]
+fn h1_picohttpparser_answers_the_same_on_the_browser_get() {
+    let limits = limits();
+    let mut fields = [FieldSpan::default(); 16];
+    let ours = net::parse_head(BROWSER_GET, &limits, &mut fields).unwrap();
+    for build in [Build::Sse42, Build::Scalar] {
+        let mut headers16 = [PhrHeader::EMPTY; 16];
+        let mut headers32 = [PhrHeader::EMPTY; 32];
+        assert_eq!(
+            pico::head(build, BROWSER_GET, &mut headers16, MAX_BODY),
+            Ok(ours)
+        );
+        assert_eq!(
+            pico::head(build, BROWSER_GET, &mut headers32, MAX_BODY),
+            Ok(ours)
+        );
+
+        // The parse-only reference parses the same head.
+        let parsed = pico::parse(build, BROWSER_GET, &mut headers16).unwrap();
+        assert_eq!(parsed.fields, BROWSER_GET_FIELDS);
+        assert_eq!(parsed.len, BROWSER_GET.len());
+    }
+}
+
+#[test]
+fn h1_picohttpparser_with_the_pass_agrees_with_http_net_on_every_rule() {
+    let limits = limits();
+    for &input in FRAMING_CASES {
+        let shown = String::from_utf8_lossy(input);
+        let mut fields = [FieldSpan::default(); 16];
+        let ours = net::parse_head(input, &limits, &mut fields);
+        for build in [Build::Sse42, Build::Scalar] {
+            let mut headers = [PhrHeader::EMPTY; 16];
+            match (&ours, pico::head(build, input, &mut headers, MAX_BODY)) {
+                (Ok(a), Ok(b)) => assert_eq!(*a, b, "{shown}"),
+                (Err(a), Err(PicoError::Framing(b))) => {
+                    assert_eq!(format!("{a:?}"), format!("{b:?}"), "{shown}");
+                }
+                (a, b) => panic!("disagree on {shown}: http-net {a:?}, pico {b:?}"),
+            }
         }
     }
 }
@@ -425,6 +476,45 @@ fn h4_both_decoders_refuse_the_same_broken_bodies() {
     assert_eq!(b, Err(chunked::ChunkError::BodyTooLarge));
 }
 
+#[test]
+fn h4_picohttpparser_delivers_the_same_body() {
+    let wire = chunked_wire();
+    let ours = chunked::http_net_decode(&wire, &limits(), |_| {}).unwrap();
+    let mut buf = wire.clone();
+    let theirs = pico::decode_chunked(&mut buf, MAX_BODY).unwrap();
+    assert_eq!(ours, theirs);
+    assert_eq!(&buf[..chunked_body().len()], &chunked_body()[..]);
+
+    // Refused alike, except that it has no budget to stop a body early: a
+    // size over the budget waits for more input, and the check comes at the
+    // end of the body.
+    for wire in [
+        &b"4\r\nWikiXX5\r\npedia\r\n0\r\n\r\n"[..],
+        b"g\r\nabc\r\n0\r\n\r\n",
+    ] {
+        assert_eq!(
+            pico::decode_chunked(&mut wire.to_vec(), MAX_BODY),
+            Err(PicoError::Parse)
+        );
+    }
+    assert_eq!(
+        pico::decode_chunked(&mut b"4\r\nWik".to_vec(), MAX_BODY),
+        Err(PicoError::Partial)
+    );
+    assert_eq!(
+        pico::decode_chunked(&mut wire_of(5), 4),
+        Err(PicoError::BodyTooLarge)
+    );
+}
+
+/// A one-chunk body of `n` bytes.
+fn wire_of(n: usize) -> Vec<u8> {
+    let mut wire = format!("{n:x}\r\n").into_bytes();
+    wire.resize(wire.len() + n, b'x');
+    wire.extend_from_slice(b"\r\n0\r\n\r\n");
+    wire
+}
+
 // ---------------------------------------------------------------- H5 ----
 
 #[test]
@@ -496,4 +586,176 @@ fn h5_hyper_and_http_net_answer_every_pipelined_request_alike() {
         ))
         .unwrap();
     assert_eq!(got, one.repeat(PIPELINED_COUNT));
+}
+
+#[test]
+fn h5_llhttp_sees_every_pipelined_request_as_http_net_does() {
+    let input = pipelined_input();
+    let response = Response::new(204);
+    let mut conn = ServerConn::with_limits(limits());
+    let mut ours = Vec::new();
+    assert_eq!(
+        net::serve_all(&mut conn, &input, READ_SIZE, &response, &mut ours),
+        PIPELINED_COUNT
+    );
+
+    // The bench's own driver: every request parsed the same, whichever read
+    // it fell across, and every one answered with http-net's bytes.
+    let mut seen = 0usize;
+    let mut out = Vec::new();
+    let watch = |m: &llhttp::Message<'_>| {
+        assert_eq!(m.method, 1, "GET");
+        assert_eq!(m.target, b"/item/42");
+        assert_eq!(m.fields, 2);
+        assert_eq!(m.host, b"a");
+        assert!(m.keep_alive);
+        seen += 1;
+    };
+    let n = llhttp::Conn::new().serve_all(&input, READ_SIZE, &ours, &mut out, watch);
+    assert_eq!(n, Ok(PIPELINED_COUNT));
+    assert_eq!(seen, PIPELINED_COUNT);
+    assert_eq!(out, ours);
+
+    assert_eq!(
+        llhttp::Conn::new().count_only(&input, READ_SIZE),
+        Ok(PIPELINED_COUNT)
+    );
+
+    // A request http-net refuses for its `host` stops this driver too, and
+    // the byte stream of a broken request stops llhttp itself.
+    let mut out = Vec::new();
+    for bad in [
+        &b"GET / HTTP/1.1\r\n\r\n"[..],
+        b"GET / HTTP/1.1\r\nHost: a\r\nHost: b\r\n\r\n",
+        b"GET / HTTP/1.1\r\nHost: a\r\nContent-Length: 5, 5\r\n\r\n",
+        b"GET / HTTP/1.1\r\nBad Name: a\r\n\r\n",
+    ] {
+        let mut conn = ServerConn::with_limits(limits());
+        assert_eq!(
+            net::serve_all(&mut conn, bad, READ_SIZE, &response, &mut out),
+            0
+        );
+        assert!(
+            llhttp::Conn::new()
+                .serve_all(bad, READ_SIZE, &ours, &mut out, ())
+                .is_err()
+        );
+    }
+}
+
+// ---------------------------------------------------------------- H6 ----
+
+#[cfg(feature = "h6")]
+mod h6 {
+    use std::{
+        io::Write,
+        net::{SocketAddr, TcpListener},
+        process::{Child, Command},
+        time::Duration,
+    };
+
+    use http_net_bench::{
+        h6::{self, Shape},
+        inputs::{PLAINTEXT_BODY, PLAINTEXT_GET, PLAINTEXT_TYPE},
+    };
+
+    use super::{Observed, observe};
+
+    /// One `h6_server` process, killed at the end of the test.
+    struct Server {
+        child: Child,
+        addr: SocketAddr,
+    }
+
+    impl Server {
+        fn start(name: &str) -> Self {
+            // Ask the kernel for a free port, then hand it to the server.
+            let addr = TcpListener::bind("127.0.0.1:0")
+                .and_then(|l| l.local_addr())
+                .unwrap();
+            let child = Command::new(env!("CARGO_BIN_EXE_h6_server"))
+                .arg(name)
+                .arg(addr.to_string())
+                .spawn()
+                .unwrap();
+            Self { child, addr }
+        }
+    }
+
+    impl Drop for Server {
+        fn drop(&mut self) {
+            let _ = self.child.kill();
+            let _ = self.child.wait();
+        }
+    }
+
+    /// Writes `pipeline` copies of `request` in one go and reads every
+    /// response, with `server` and `date` taken out: `date` differs by the
+    /// second, and may-minihttp always writes its own `server`.
+    fn exchange(addr: SocketAddr, request: &[u8], pipeline: usize) -> Vec<Observed> {
+        let mut stream = h6::connect(addr, Duration::from_secs(5)).unwrap();
+        stream.write_all(&request.repeat(pipeline)).unwrap();
+        let mut rest = Vec::new();
+        (0..pipeline)
+            .map(|_| {
+                let one = h6::read_response(&mut stream, &mut rest).unwrap();
+                let (mut seen, used) = observe(&one);
+                assert_eq!(used, one.len());
+                assert!(seen.fields.iter().any(|(n, _)| n == "date"), "no date");
+                seen.fields.retain(|(n, _)| n != "date" && n != "server");
+                seen
+            })
+            .collect()
+    }
+
+    #[test]
+    fn h6_every_server_answers_the_same_request_alike() {
+        for name in ["serve-net", "hyper", "actix-web", "may-minihttp"] {
+            let server = Server::start(name);
+            for seen in exchange(server.addr, PLAINTEXT_GET, 16) {
+                assert_eq!(seen.status, 200, "{name}");
+                assert_eq!(seen.body, PLAINTEXT_BODY, "{name}");
+                assert_eq!(
+                    seen.fields,
+                    [
+                        ("content-length".to_owned(), b"13".to_vec()),
+                        (
+                            "content-type".to_owned(),
+                            PLAINTEXT_TYPE.as_bytes().to_vec()
+                        ),
+                    ],
+                    "{name}"
+                );
+            }
+
+            // Every server routes: another path is not a canned answer.
+            let other = String::from_utf8_lossy(PLAINTEXT_GET).replace("/plaintext", "/other");
+            let seen = exchange(server.addr, other.as_bytes(), 1);
+            assert_eq!(seen[0].status, 404, "{name}");
+        }
+    }
+
+    #[test]
+    fn h6_the_generator_outlasts_every_connection_limit() {
+        // More requests per connection than any server's defaults allow
+        // (serve-net closes at 1,000 unless told otherwise): a server that
+        // closes a connection fails the run.
+        for name in ["serve-net", "hyper", "actix-web", "may-minihttp"] {
+            let server = Server::start(name);
+            let shape = Shape {
+                connections: 16,
+                pipeline: 16,
+            };
+            let run = h6::run(
+                server.addr,
+                shape,
+                Duration::ZERO,
+                Duration::from_secs(1),
+                Some(server.child.id()),
+            )
+            .unwrap();
+            assert!(run.requests > 16 * 1000, "{name}: {run:?}");
+            assert!(run.server_cpu.is_some(), "{name}: {run:?}");
+        }
+    }
 }

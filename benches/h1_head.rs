@@ -16,6 +16,10 @@
 //! - `http_net/server_conn_head`: reference, the same head through a reused
 //!   `ServerConn` (copy into its buffer, resumable scan), up to the head
 //!   event, then `reset`.
+//! - `picohttpparser/parse_and_framing/{16,32}`: report only,
+//!   `phr_parse_request` compiled with SSE4.2, then the same framing pass;
+//!   `picohttpparser_scalar/...` is the copy compiled without it, and
+//!   `picohttpparser/parse_only/16` the parse alone.
 //!
 //! The group name carries the httparse build mode (`h1_head_simd` or
 //! `h1_head_nosimd`); `scripts/run.sh` runs both.
@@ -28,6 +32,7 @@ use http_net_bench::{
     HTTPARSE_MODE, framing,
     inputs::{BROWSER_GET, MAX_BODY, limits},
     net,
+    pico::{self, Build, PhrHeader},
 };
 
 mod common;
@@ -77,6 +82,33 @@ fn bench_h1(c: &mut Criterion) {
     group.bench_function("http_net/server_conn_head", |b| {
         b.iter(|| black_box(net::server_conn_head(&mut conn, black_box(BROWSER_GET))))
     });
+
+    for (name, build) in [
+        ("picohttpparser", Build::Sse42),
+        ("picohttpparser_scalar", Build::Scalar),
+    ] {
+        group.bench_function(format!("{name}/parse_and_framing/16"), |b| {
+            b.iter(|| {
+                let mut headers = [PhrHeader::EMPTY; 16];
+                let summary = pico::head(build, black_box(BROWSER_GET), &mut headers, MAX_BODY);
+                black_box(&summary);
+            })
+        });
+        group.bench_function(format!("{name}/parse_and_framing/32"), |b| {
+            b.iter(|| {
+                let mut headers = [PhrHeader::EMPTY; 32];
+                let summary = pico::head(build, black_box(BROWSER_GET), &mut headers, MAX_BODY);
+                black_box(&summary);
+            })
+        });
+        group.bench_function(format!("{name}/parse_only/16"), |b| {
+            b.iter(|| {
+                let mut headers = [PhrHeader::EMPTY; 16];
+                let parsed = pico::parse(build, black_box(BROWSER_GET), &mut headers);
+                black_box((&parsed, &headers));
+            })
+        });
+    }
     group.finish();
 }
 

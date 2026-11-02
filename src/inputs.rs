@@ -107,6 +107,23 @@ pub fn chunked_wire() -> Vec<u8> {
     wire
 }
 
+/// The path of the plaintext workload (H6).
+pub const PLAINTEXT_PATH: &str = "/plaintext";
+
+/// One request of the plaintext workload (H6): the shape of TechEmpower's
+/// pipelined plaintext test. Unlike the other inputs, it is not one of
+/// http-net's own bench inputs.
+pub const PLAINTEXT_GET: &[u8] = b"GET /plaintext HTTP/1.1\r\n\
+Host: 127.0.0.1\r\n\
+Accept: text/plain,text/html;q=0.9,application/xhtml+xml;q=0.9,application/xml;q=0.8,*/*;q=0.7\r\n\
+Connection: keep-alive\r\n\r\n";
+
+/// The response body of the plaintext workload (H6).
+pub const PLAINTEXT_BODY: &[u8] = b"Hello, World!";
+
+/// The `content-type` of the plaintext workload (H6).
+pub const PLAINTEXT_TYPE: &str = "text/plain";
+
 /// The limits of every workload: http-net's defaults, with the body budget
 /// raised to 2 MiB (as http-net's `body_1mib` bench does) so the 1 MiB body
 /// fits. The framing pass and the chunked loop on the httparse side enforce

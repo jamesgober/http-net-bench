@@ -58,6 +58,27 @@
 
 use httparse::Header;
 
+/// One parsed field line, whichever parser produced it. The pass is the same
+/// code for `httparse` and for picohttpparser (`src/pico.rs`).
+pub trait FieldLine {
+    /// The field name.
+    fn name(&self) -> &[u8];
+    /// The field value.
+    fn value(&self) -> &[u8];
+}
+
+impl FieldLine for Header<'_> {
+    #[inline]
+    fn name(&self) -> &[u8] {
+        self.name.as_bytes()
+    }
+
+    #[inline]
+    fn value(&self) -> &[u8] {
+        self.value
+    }
+}
+
 /// How a message's body is delimited: the common form both sides are
 /// compared in.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -226,18 +247,41 @@ pub fn request_framing(
     req: &httparse::Request<'_, '_>,
     max_body: u64,
 ) -> Result<RequestFacts, FramingError> {
-    let (Some(method_str), Some(target), Some(minor)) = (req.method, req.path, req.version) else {
+    let (Some(method), Some(target), Some(minor)) = (req.method, req.path, req.version) else {
         panic!("request_framing needs a complete parse");
     };
+    request_parts_framing(
+        method.as_bytes(),
+        target.as_bytes(),
+        minor,
+        req.headers,
+        max_body,
+    )
+}
+
+/// The framing pass for a request any parser split into its parts: `minor`
+/// is the digit of `HTTP/1.x`.
+///
+/// # Errors
+///
+/// The [`FramingError`] for the first rule the head breaks.
+#[inline]
+pub fn request_parts_framing<F: FieldLine>(
+    method: &[u8],
+    target: &[u8],
+    minor: u8,
+    fields: &[F],
+    max_body: u64,
+) -> Result<RequestFacts, FramingError> {
     let http11 = match minor {
         1 => true,
         0 => false,
         _ => return Err(FramingError::UnsupportedVersion),
     };
-    let method = Method::from_bytes(method_str.as_bytes());
-    check_target(method, target.as_bytes())?;
+    let method = Method::from_bytes(method);
+    check_target(method, target)?;
 
-    let facts = scan_fields(req.headers)?;
+    let facts = scan_fields(fields)?;
     let framing = match transfer_framing(&facts, http11)? {
         Some(f) => f,
         None => match facts.content_length {
@@ -251,7 +295,7 @@ pub fn request_framing(
     }
     match facts.host {
         Some(i) => {
-            if !is_host_value(req.headers[i].value) {
+            if !is_host_value(fields[i].value()) {
                 return Err(FramingError::InvalidHost);
             }
         }
@@ -331,11 +375,11 @@ pub fn response_framing(
 }
 
 #[inline]
-fn scan_fields(headers: &[Header<'_>]) -> Result<FieldFacts, FramingError> {
+fn scan_fields<F: FieldLine>(fields: &[F]) -> Result<FieldFacts, FramingError> {
     let mut facts = FieldFacts::default();
-    for (i, field) in headers.iter().enumerate() {
-        let name = field.name.as_bytes();
-        let value = field.value;
+    for (i, field) in fields.iter().enumerate() {
+        let name = field.name();
+        let value = field.value();
         if name.eq_ignore_ascii_case(b"content-length") {
             if facts.content_length.is_some() {
                 return Err(FramingError::DuplicateContentLength);
