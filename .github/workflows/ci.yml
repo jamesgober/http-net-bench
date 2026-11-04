@@ -32,10 +32,14 @@ jobs:
         run: cargo fmt --all -- --check
       - name: Clippy
         run: cargo clippy --locked --all-targets -- -D warnings
+      - name: Clippy (H6 servers)
+        run: cargo clippy --locked --all-targets --features h6 -- -D warnings
       - name: Equivalence tests
-        run: cargo test --locked
+        run: cargo test --locked --features h6
       - name: Build the benches (httparse SIMD on)
         run: cargo bench --locked --no-run
+      - name: Build the H6 binaries
+        run: cargo build --release --locked --features h6 --bin h6_server --bin h6_load
       # httparse 1.10 honours only the `="1"` form of this cfg.
       - name: Build the benches (httparse SIMD off)
         run: cargo bench --locked --no-run --bench h1_head --bench h3_response

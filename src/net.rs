@@ -49,7 +49,8 @@ impl HeadSummary {
 
 /// Where `part` (a view the parser returned) sits inside `input`.
 #[inline]
-pub(crate) fn offset_in(input: &[u8], part: &str) -> (usize, usize) {
+pub(crate) fn offset_in(input: &[u8], part: impl AsRef<[u8]>) -> (usize, usize) {
+    let part = part.as_ref();
     (
         (part.as_ptr() as usize).wrapping_sub(input.as_ptr() as usize),
         part.len(),

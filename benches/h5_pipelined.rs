@@ -17,6 +17,12 @@
 //!   loop, moving the same bytes each way, with a task that counts request
 //!   bytes and writes one canned response per request: the executor and
 //!   transport overhead inside `hyper/...`.
+//! - `llhttp/parse_and_answer`: report only. A fresh llhttp parser fed
+//!   16 KiB at a time; its callbacks copy the head into a reused buffer,
+//!   index the fields, count `host`, read keep-alive, and write the 204
+//!   (see `src/llhttp.rs`).
+//! - `llhttp/count_only`: report only. The same parser and reads with one
+//!   callback counting messages, the shape of llhttp's own benchmark table.
 //!
 //! One iteration takes milliseconds, so the group uses flat sampling (each
 //! of the 100 samples runs the same number of iterations).
@@ -28,7 +34,7 @@ use http_net::{Response, ServerConn};
 use http_net_bench::{
     HTTPARSE_MODE,
     inputs::{PIPELINED_COUNT, PIPELINED_ONE, READ_SIZE, limits, pipelined_input},
-    net, rt,
+    llhttp, net, rt,
 };
 
 mod common;
@@ -107,6 +113,33 @@ fn bench_h5(c: &mut Criterion) {
                 black_box(got)
             },
             BatchSize::PerIteration,
+        )
+    });
+
+    // The same response bytes http-net writes for this input.
+    let wire = {
+        let mut conn = ServerConn::with_limits(limits());
+        let mut out = Vec::new();
+        net::serve_all(&mut conn, PIPELINED_ONE, READ_SIZE, &response, &mut out);
+        out
+    };
+    group.bench_function("llhttp/parse_and_answer", |b| {
+        b.iter_batched(
+            || (llhttp::Conn::new(), Vec::with_capacity(256)),
+            |(mut conn, mut out)| {
+                let n = conn.serve_all(&input, READ_SIZE, &wire, &mut out, ());
+                assert_eq!(n, Ok(PIPELINED_COUNT));
+            },
+            BatchSize::LargeInput,
+        )
+    });
+    group.bench_function("llhttp/count_only", |b| {
+        b.iter_batched(
+            llhttp::Conn::new,
+            |mut conn| {
+                assert_eq!(conn.count_only(&input, READ_SIZE), Ok(PIPELINED_COUNT));
+            },
+            BatchSize::LargeInput,
         )
     });
     group.finish();

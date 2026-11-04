@@ -11,14 +11,23 @@
 //! - [`chunked`]: the chunked-body loops for both sides.
 //! - [`rt`]: hyper and the bare transport baseline over an in-memory
 //!   `tokio::io::duplex` stream on a current-thread runtime.
+//! - [`pico`] and [`llhttp`]: the report-only C parsers. These two modules
+//!   are the only unsafe code in the crate: the foreign calls and nothing
+//!   else.
+//! - [`h6`]: the load generator of the socket workload.
 
-#![forbid(unsafe_code)]
+#![deny(unsafe_code)]
 #![warn(missing_docs)]
 
 pub mod chunked;
 pub mod framing;
+pub mod h6;
 pub mod inputs;
+#[allow(unsafe_code)]
+pub mod llhttp;
 pub mod net;
+#[allow(unsafe_code)]
+pub mod pico;
 pub mod rt;
 
 /// How this build's `httparse` was compiled: `"simd"` (the default, runtime

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Runs every competitor benchmark (H1-H5) pinned to one core and writes a
-# results file under results/, named by date and commit.
+# Runs every competitor benchmark (H1-H6), each pinned, and writes a results
+# file under results/, named by date and commit.
 #
 # Usage:
 #   scripts/run.sh            full run: the method of spec section 11.3
@@ -10,7 +10,11 @@
 #                             is labelled as a smoke run, not a measurement
 #
 # Environment:
-#   CORE=3                    the core to pin to (taskset -c)
+#   CORE=3                    the core to pin to (taskset -c); for H6, the
+#                             core of the server
+#   CLIENT_CORES=4,6,8,10     H6: the cores of the load generator; never the
+#                             server core or its SMT sibling (lscpu -e)
+#   ROUNDS=5                  H6: rounds of the interleaved server loop
 #   CARGO_TARGET_DIR          honoured; the SIMD-off build goes in
 #                             $CARGO_TARGET_DIR/nosimd so the two builds
 #                             never invalidate each other
@@ -21,6 +25,11 @@
 # --cfg httparse_disable_simd="1"; the bare --cfg httparse_disable_simd
 # does nothing. The script checks the build script's output to prove the
 # switch took effect.
+#
+# H6 is not a criterion bench: a server and a load generator run in two
+# processes. Every server serves one shape at a time, on a fresh process, in
+# interleaved rounds so that drift falls on all of them; the table has the
+# median round.
 #
 # Linux only (taskset, /proc/cpuinfo); in WSL run it from the Linux side.
 
@@ -42,6 +51,14 @@ if [[ $# -gt 0 ]]; then
 fi
 
 CORE="${CORE:-3}"
+CLIENT_CORES="${CLIENT_CORES:-4,6,8,10}"
+ROUNDS="${ROUNDS:-5}"
+H6_WARM_UP=1
+H6_MEASURE=3
+if [[ "$MODE" == "smoke" ]]; then
+    ROUNDS=1
+    H6_MEASURE=1
+fi
 TARGET="${CARGO_TARGET_DIR:-$ROOT/target}"
 NOSIMD_TARGET="$TARGET/nosimd"
 NOSIMD_FLAGS='--cfg httparse_disable_simd="1"'
@@ -61,7 +78,9 @@ fi
 mkdir -p results
 OUT="results/${NAME}.md"
 LOG="$(mktemp)"
-trap 'rm -f "$LOG"' EXIT
+H6_DATA="$(mktemp)"
+trap 'rm -f "$LOG" "$H6_DATA"' EXIT
+LOAD_START="$(cut -d' ' -f1-3 /proc/loadavg)"
 
 # A fresh criterion directory per run, so the summary holds only this run.
 CRITERION_DIR="$TARGET/criterion-runs/$NAME-$(date -u +%H%M%S)"
@@ -77,6 +96,9 @@ lock_version() {
 
 echo "== build (httparse SIMD on)"
 cargo bench --locked --no-run
+
+echo "== build (H6 server and load generator)"
+cargo build --release --locked --features h6 --bin h6_server --bin h6_load
 
 echo "== build (httparse SIMD off)"
 CARGO_TARGET_DIR="$NOSIMD_TARGET" RUSTFLAGS="$NOSIMD_FLAGS" \
@@ -117,6 +139,60 @@ run_bench "$NOSIMD_TARGET" "$NOSIMD_FLAGS" h3_response
 for bench in h2_exchange h4_chunked h5_pipelined; do
     run_bench "$TARGET" "" "$bench"
 done
+
+# -------------------------------------------------------------------- H6
+
+H6_SERVERS=(serve-net hyper actix-web may-minihttp)
+H6_SHAPES=("1 1" "1 16" "16 16")
+H6_PORT=18080
+
+h6_round() {
+    # h6_round <server> <connections> <pipeline>
+    local server="$1" connections="$2" pipeline="$3" pid
+    taskset -c "$CORE" "$TARGET/release/h6_server" "$server" "127.0.0.1:$H6_PORT" &
+    pid=$!
+    local line
+    line="$(taskset -c "$CLIENT_CORES" "$TARGET/release/h6_load" "127.0.0.1:$H6_PORT" \
+        "$connections" "$pipeline" "$H6_WARM_UP" "$H6_MEASURE" "$pid")" || {
+        kill "$pid" 2>/dev/null
+        return 1
+    }
+    kill "$pid" 2>/dev/null
+    wait "$pid" 2>/dev/null || true
+    # A new port each time: no waiting on the old sockets in TIME_WAIT.
+    H6_PORT=$((H6_PORT + 1))
+    printf '%s\t%s\t%s\t%s\n' "$server" "$connections" "$pipeline" "$line" >> "$H6_DATA"
+}
+
+echo "== h6 (server on core $CORE, load on $CLIENT_CORES, $ROUNDS rounds)" | tee -a "$LOG"
+for ((round = 1; round <= ROUNDS; round++)); do
+    for shape in "${H6_SHAPES[@]}"; do
+        read -r connections pipeline <<< "$shape"
+        for server in "${H6_SERVERS[@]}"; do
+            h6_round "$server" "$connections" "$pipeline"
+        done
+    done
+done
+
+h6_table() {
+    # One row per server and shape: the median, lowest, and highest round.
+    local shape server connections pipeline
+    for shape in "${H6_SHAPES[@]}"; do
+        read -r connections pipeline <<< "$shape"
+        for server in "${H6_SERVERS[@]}"; do
+            awk -F'\t' -v s="$server" -v c="$connections" -v p="$pipeline" '
+                $1 == s && $2 == c && $3 == p { print $6, $7 }
+            ' "$H6_DATA" | sort -n | awk -v s="$server" -v c="$connections" -v p="$pipeline" '
+                { rate[NR] = $1; cpu[NR] = $2 }
+                END {
+                    mid = int((NR + 1) / 2)
+                    printf("| %s | %d | %d | %.3f M/s | %.3f to %.3f | %s%% |\n",
+                        s, c, p, rate[mid] / 1e6, rate[1] / 1e6, rate[NR] / 1e6, cpu[mid]);
+                }
+            '
+        done
+    done
+}
 
 # ---------------------------------------------------------------- report
 
@@ -170,8 +246,18 @@ median_table() {
     echo "| httparse | $(lock_version httparse) |"
     echo "| hyper | $(lock_version hyper) |"
     echo "| tokio | $(lock_version tokio) |"
+    echo "| picohttpparser | \`dd573d8\` (vendored) |"
+    echo "| llhttp | $(awk '/define LLHTTP_VERSION_(MAJOR|MINOR)/ { printf "%s.", $3 } /define LLHTTP_VERSION_PATCH/ { print $3 }' vendor/llhttp/llhttp.h) (vendored) |"
+    echo "| serve-net | $(lock_version serve-net) (vendored for its http-net requirement) |"
+    echo "| net-io | $(lock_version net-io) |"
+    echo "| actix-web | $(lock_version actix-web) |"
+    echo "| may-minihttp | $(lock_version may_minihttp) |"
+    echo "| C compiler | $(cc --version | head -1), \`-O3\`, \`-msse4.2\` except the scalar copy |"
     echo "| CPU | $(grep -m1 'model name' /proc/cpuinfo | cut -d: -f2- | sed 's/^ *//') |"
     echo "| Pinned core | $CORE |"
+    echo "| H6 load generator cores | $CLIENT_CORES |"
+    echo "| Load average (first minute, five, fifteen) at start | $LOAD_START |"
+    echo "| Load average at end | $(cut -d' ' -f1-3 /proc/loadavg) |"
     echo "| Governor | $(cat "/sys/devices/system/cpu/cpu$CORE/cpufreq/scaling_governor" 2>/dev/null || echo 'not exposed') |"
     echo "| Criterion args | ${CRITERION_ARGS[*]:-none (defaults of the benches)} |"
     echo "| RUSTFLAGS (SIMD-on build) | ${RUSTFLAGS:-unset} |"
@@ -194,6 +280,17 @@ median_table() {
     echo "| Benchmark | Median | Throughput at the median |"
     echo "|---|---:|---:|"
     median_table
+    echo
+    echo "## H6, plaintext over sockets"
+    echo
+    echo "Report only. Requests per second, closed loop, over 127.0.0.1, $ROUNDS"
+    echo "rounds of ${H6_WARM_UP} s warm-up and ${H6_MEASURE} s measurement, each server a fresh process"
+    echo "pinned to core $CORE. CPU is the server process in the median round,"
+    echo "in percent of one core: at 100% the server set the rate."
+    echo
+    echo "| Server | Connections | Pipeline | Median | Rounds, lowest to highest | Server CPU |"
+    echo "|---|---:|---:|---:|---:|---:|"
+    h6_table
     echo
     echo "## Criterion output"
     echo
