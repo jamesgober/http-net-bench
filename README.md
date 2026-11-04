@@ -118,7 +118,7 @@ Results files live in [`results/`](./results/). A file whose name ends in `-smok
 | File | http-net | Note |
 |---|---|---|
 | [`2026-10-29-c1255d143e57`](./results/2026-10-29-c1255d143e57.md) | 0.9.0 | The machine was shared with fuzzers (load average 6 to 12): absolute times are about half higher than on a quiet machine for both sides, so read the ratios within a group. Superseded by the next file. |
-| [`2026-11-04-fb4f3084276c`](./results/2026-11-04-fb4f3084276c.md) | 0.9.0 | Quiet machine (load average under 3 throughout). First run with picohttpparser, llhttp, and H6. The drift control caught the first H1 pass running slow, so H1 was run again on its own: read H1 from the table in the file's Note. picohttpparser rows move between the two binaries though they do not use httparse; compare them within one binary. |
+| [`2026-11-04-fb4f3084276c`](./results/2026-11-04-fb4f3084276c.md) | 0.9.0 | Quiet machine (no fuzzers; one-minute load average 0.2 at start, 2.7 at end). First run with picohttpparser, llhttp, and H6. The drift control caught the first H1 pass running slow, so H1 was run again on its own: read H1 from the table in the file's Note. picohttpparser rows move between the two binaries though they do not use httparse; compare them within one binary. |
 
 <br>
 
