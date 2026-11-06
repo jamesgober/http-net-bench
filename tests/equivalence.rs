@@ -689,6 +689,15 @@ mod h6 {
         }
     }
 
+    /// Every server `h6_server` runs, serve-net on both net-io drivers.
+    const SERVERS: [&str; 5] = [
+        "serve-net",
+        "serve-net-blocking",
+        "hyper",
+        "actix-web",
+        "may-minihttp",
+    ];
+
     /// Writes `pipeline` copies of `request` in one go and reads every
     /// response, with `server` and `date` taken out: `date` differs by the
     /// second, and may-minihttp always writes its own `server`.
@@ -710,7 +719,7 @@ mod h6 {
 
     #[test]
     fn h6_every_server_answers_the_same_request_alike() {
-        for name in ["serve-net", "hyper", "actix-web", "may-minihttp"] {
+        for name in SERVERS {
             let server = Server::start(name);
             for seen in exchange(server.addr, PLAINTEXT_GET, 16) {
                 assert_eq!(seen.status, 200, "{name}");
@@ -740,7 +749,7 @@ mod h6 {
         // More requests per connection than any server's defaults allow
         // (serve-net closes at 1,000 unless told otherwise): a server that
         // closes a connection fails the run.
-        for name in ["serve-net", "hyper", "actix-web", "may-minihttp"] {
+        for name in SERVERS {
             let server = Server::start(name);
             let shape = Shape {
                 connections: 16,
