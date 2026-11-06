@@ -142,7 +142,7 @@ done
 
 # -------------------------------------------------------------------- H6
 
-H6_SERVERS=(serve-net hyper actix-web may-minihttp)
+H6_SERVERS=(serve-net serve-net-blocking hyper actix-web may-minihttp)
 H6_SHAPES=("1 1" "1 16" "16 16")
 H6_PORT=18080
 
@@ -248,7 +248,7 @@ median_table() {
     echo "| tokio | $(lock_version tokio) |"
     echo "| picohttpparser | \`dd573d8\` (vendored) |"
     echo "| llhttp | $(awk '/define LLHTTP_VERSION_(MAJOR|MINOR)/ { printf "%s.", $3 } /define LLHTTP_VERSION_PATCH/ { print $3 }' vendor/llhttp/llhttp.h) (vendored) |"
-    echo "| serve-net | $(lock_version serve-net) (vendored for its http-net requirement) |"
+    echo "| serve-net | $(lock_version serve-net) |"
     echo "| net-io | $(lock_version net-io) |"
     echo "| actix-web | $(lock_version actix-web) |"
     echo "| may-minihttp | $(lock_version may_minihttp) |"

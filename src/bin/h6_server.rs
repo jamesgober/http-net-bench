@@ -3,7 +3,7 @@
 //! for any other path.
 //!
 //! ```text
-//! h6_server <serve-net|hyper|actix-web|may-minihttp> <addr>
+//! h6_server <serve-net|serve-net-blocking|hyper|actix-web|may-minihttp> <addr>
 //! ```
 //!
 //! Each is set up for one core, the way its own documentation gives for one
@@ -21,11 +21,12 @@ use hyper_util::rt::TokioIo;
 
 /// serve-net through its Tier 2 builder, over http-net's `ServerConn`.
 ///
-/// net-io 0.3, the transport serve-net 0.3 is built on, has a blocking
-/// driver only: every connection holds a thread, so the pool is sized for
-/// the 16 connections of the largest shape, and they share the pinned core.
-fn serve_net_server(addr: SocketAddr) -> Result<(), Box<dyn Error>> {
-    use serve_net::{KeepAlive, ListenerSpec, Server, Workers};
+/// `workers` picks net-io's driver: the reactor with one event loop, which
+/// is how every other server here runs, or the blocking pool, where every
+/// connection holds a thread (sized for the 16 connections of the largest
+/// shape, all sharing the pinned core).
+fn serve_net_server(addr: SocketAddr, workers: serve_net::Workers) -> Result<(), Box<dyn Error>> {
+    use serve_net::{KeepAlive, ListenerSpec, Server};
     const FOREVER: std::time::Duration = std::time::Duration::from_secs(u32::MAX as u64);
 
     // Proof that the http-net behind serve-net is this crate's, 0.9.
@@ -49,7 +50,7 @@ fn serve_net_server(addr: SocketAddr) -> Result<(), Box<dyn Error>> {
                 .max_age(FOREVER)
                 .idle(FOREVER),
         )
-        .workers(Workers::blocking(32))
+        .workers(workers)
         .serve(service)?;
     running.wait();
     Ok(())
@@ -168,11 +169,14 @@ fn may_server(addr: SocketAddr) -> Result<(), Box<dyn Error>> {
 fn main() -> ExitCode {
     let args: Vec<String> = env::args().skip(1).collect();
     let Some(addr) = args.get(1).and_then(|a| a.parse().ok()) else {
-        eprintln!("usage: h6_server <serve-net|hyper|actix-web|may-minihttp> <addr>");
+        eprintln!(
+            "usage: h6_server <serve-net|serve-net-blocking|hyper|actix-web|may-minihttp> <addr>"
+        );
         return ExitCode::from(2);
     };
     let served = match args[0].as_str() {
-        "serve-net" => serve_net_server(addr),
+        "serve-net" => serve_net_server(addr, serve_net::Workers::reactor(1)),
+        "serve-net-blocking" => serve_net_server(addr, serve_net::Workers::blocking(32)),
         "hyper" => hyper_server(addr),
         "actix-web" => actix_server(addr),
         "may-minihttp" => may_server(addr),
