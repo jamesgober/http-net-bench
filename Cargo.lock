@@ -931,9 +931,9 @@ dependencies = [
 
 [[package]]
 name = "net-io"
-version = "0.3.0"
+version = "0.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b9581efc251f8d5fdb53df3a315bb5ed3e71109250561c4077fc7c60b454cda9"
+checksum = "f463cbc38a1f2932a4125ccef50557272b44e3962547582b22898a4a01bac98e"
 
 [[package]]
 name = "nix"
@@ -1202,7 +1202,9 @@ dependencies = [
 
 [[package]]
 name = "serve-net"
-version = "0.3.0"
+version = "0.6.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9f4d24da98b8dba9cbf6b037ba7760f6c15d223f5d4dcb193c6ffbdebc0cd7d5"
 dependencies = [
  "http-net",
  "net-io",

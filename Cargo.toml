@@ -7,8 +7,7 @@
 # This repository exists so that http-net itself never depends on tokio,
 # hyper, or httparse. Those crates are allowed here and only here. http-net
 # is taken from crates.io, never by path: each repository is checked out on
-# its own in CI. serve-net is the one vendored Rust crate: vendor/README.md
-# says why, and what it changes.
+# its own in CI.
 [package]
 name    = "http-net-bench"
 version = "0.1.0"
@@ -48,7 +47,7 @@ bytes          = "1"
 tokio          = { version = "1", features = ["rt", "io-util", "macros"] }
 # H6 only, behind the `h6` feature: the competitor servers stay out of the
 # H1-H5 build.
-serve-net      = { version = "0.3", path = "vendor/serve-net", optional = true }
+serve-net      = { version = "0.6", default-features = false, features = ["http1"], optional = true }
 actix-web      = { version = "4", default-features = false, optional = true }
 may_minihttp   = { version = "0.1", optional = true }
 may            = { version = "0.3", optional = true }
